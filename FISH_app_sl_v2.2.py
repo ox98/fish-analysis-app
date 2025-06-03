@@ -32,12 +32,23 @@ class FISHDataAnalyzer:
 
     def process_cell_count(self, df, total_cells):
         if total_cells == self.cell_counts[0]:
-            df_cells = df[df['Score No.'] == (50 if total_cells == 100 else 100)].copy()
-        else: # Second count
-            df_cells = df[df['Score No.'] == (100 if total_cells == 200 else [100, 150])].copy()
-            if total_cells == 500: # Special handling for 500 if Score No. is [100,150]
-                 df_cells = df[df['Score No.'].isin([100,150])].copy()
-
+            # For the first count, it seems you are comparing with single values based on total_cells
+            if total_cells == 100:
+                df_cells = df[df['Score No.'] == 50].copy()
+            elif total_cells == 200: # Assuming this is the first count if cell_counts = [200, 500]
+                df_cells = df[df['Score No.'] == 100].copy()
+            else: # Add a fallback or error if unexpected total_cells for first count
+                self.log_message(f"Unexpected total_cells value for first count: {total_cells}", "red", True)
+                df_cells = pd.DataFrame() # Or raise an error
+        else:  # This is for the second count (e.g., self.cell_counts[1])
+            if total_cells == 200: # e.g., second count in a 100/200 scheme
+                df_cells = df[df['Score No.'] == 100].copy() # Assuming Score No. 100 represents fully counted for this stage
+            elif total_cells == 500: # e.g., second count in a 200/500 scheme
+                # Here's the critical change: use .isin() for multiple values
+                df_cells = df[df['Score No.'].isin([100, 150])].copy()
+            else: # Add a fallback or error if unexpected total_cells for second count
+                self.log_message(f"Unexpected total_cells value for second count: {total_cells}", "red", True)
+                df_cells = pd.DataFrame() # Or raise an error
 
         # Use self.selected_patterns directly for processing relevant patterns
         # patterns_to_process are the short names the user actually selected.
