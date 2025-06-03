@@ -6,34 +6,24 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-# --- FISHDataAnalyzer Class (Copied directly from your provided code) ---
+# --- FISHDataAnalyzer Class ---
 class FISHDataAnalyzer:
     def __init__(self, fish_data, cell_counts, selected_patterns, probe_name, calculation_method, log_callback=None):
-        """Initialize the analyzer with data and parameters"""
         self.fish_data = fish_data
-        self.cell_counts = cell_counts  # e.g., [100, 200] or [200, 500]
-        self.selected_patterns = selected_patterns
+        self.cell_counts = cell_counts
+        self.selected_patterns = selected_patterns # This is already the list of short pattern names in selected order
         self.probe_name = probe_name
-        self.calculation_method = calculation_method # "Beta" or "Cribinom"
+        self.calculation_method = calculation_method
         self.log_callback = log_callback
 
     def log_message(self, message, color="black", bold=False):
-        """Log message if callback is available"""
         if self.log_callback:
             self.log_callback(message, color, bold)
 
     def reorganize_data_with_techs(self, total_cells):
-        """Reorganize data for specific cell count"""
         self.log_message(f"Reorganizing data for {total_cells} cells...")
-
-        all_patterns = self.fish_data['Signal_Pattern'].unique()
-        pattern_mapping = {}
-
-        for pattern in all_patterns:
-            if '_' in str(pattern):
-                pattern_mapping[pattern] = pattern.split('_')[-1]
-            else:
-                pattern_mapping[pattern] = pattern
+        all_patterns_raw = self.fish_data['Signal_Pattern'].unique()
+        pattern_mapping = {pat_raw: str(pat_raw).split('_')[-1] if '_' in str(pat_raw) else str(pat_raw) for pat_raw in all_patterns_raw}
 
         df = self.fish_data.copy()
         df['Signal_Pattern_Short'] = df['Signal_Pattern'].map(pattern_mapping)
@@ -41,175 +31,189 @@ class FISHDataAnalyzer:
         return self.process_cell_count(df_filtered, total_cells)
 
     def process_cell_count(self, df, total_cells):
-        """Process data for a specific cell count"""
-        if total_cells == self.cell_counts[0]: # e.g. 100 or 200
-            if total_cells == 100: # 50+50 configuration
-                df_cells = df[df['Score No.'] == 50].copy()
-            else:  # 200 (from 100+100 configuration)
-                df_cells = df[df['Score No.'] == 100].copy()
-        else: # e.g. 200 or 500 (second count)
-            if total_cells == 200: # From 50+50 configuration, so sum of two scores
-                df_cells = df[df['Score No.'] == 100].copy()
-            else:  # 500 (from 100+150 configuration)
-                df_cells = df[df['Score No.'].isin([100,150])].copy()
+        if total_cells == self.cell_counts[0]:
+            df_cells = df[df['Score No.'] == (50 if total_cells == 100 else 100)].copy()
+        else: # Second count
+            df_cells = df[df['Score No.'] == (100 if total_cells == 200 else [100, 150])].copy()
+            if total_cells == 500: # Special handling for 500 if Score No. is [100,150]
+                 df_cells = df[df['Score No.'].isin([100,150])].copy()
 
-        cases = df_cells['Case No.'].unique()
-        all_patterns_short = df_cells['Signal_Pattern_Short'].unique()
+
+        # Use self.selected_patterns directly for processing relevant patterns
+        # patterns_to_process are the short names the user actually selected.
+        patterns_to_process = [p for p in self.selected_patterns if p in df['Signal_Pattern_Short'].unique()]
         
-        patterns_to_process = [p for p in all_patterns_short if p in self.selected_patterns]
-        self.log_message(f"Processing {len(patterns_to_process)} selected patterns for {total_cells} cells")
+        self.log_message(f"Processing {len(patterns_to_process)} selected patterns for {total_cells} cells based on user selection and data availability.")
 
-        result_columns = ['Case No.', 'Hybe date', 'Case ID', '# Scored']
-        case_info_df = df_cells[['Case No.', 'Hybe date', 'Case ID']].drop_duplicates(subset=['Case No.'])
+        case_info_df = df[['Case No.', 'Hybe date', 'Case ID']].drop_duplicates(subset=['Case No.'])
         result_df = pd.DataFrame(case_info_df).reset_index(drop=True)
-
         if 'Hybe date' in result_df.columns:
             result_df['Hybe date'] = pd.to_datetime(result_df['Hybe date'], errors='coerce').dt.strftime('%m/%d/%y')
         result_df['# Scored'] = total_cells
 
-        for pattern in patterns_to_process:
-            tech1_col = f"{pattern}_Tech 1"
-            tech2_col = f"{pattern}_Tech 2"
-            pct_col = f"{pattern}_%"
-
-            result_df[tech1_col] = 0
-            result_df[tech2_col] = 0
-            result_df[pct_col] = 0.0
+        for pattern in patterns_to_process: # Iterate based on selected patterns
+            tech1_col, tech2_col, pct_col = f"{pattern}_Tech 1", f"{pattern}_Tech 2", f"{pattern}_%"
+            result_df[tech1_col], result_df[tech2_col], result_df[pct_col] = 0, 0, 0.0
 
             for idx, case_row in result_df.iterrows():
                 case_no_current = case_row['Case No.']
-                
-                tech1_data = df_cells[(df_cells['Case No.'] == case_no_current) &
-                                     (df_cells['Signal_Pattern_Short'] == pattern) &
-                                     (df_cells['Tech No.'] == 'Tech 1')]
-                tech1_value = tech1_data['Value'].fillna(0).sum()
-
-                tech2_data = df_cells[(df_cells['Case No.'] == case_no_current) &
-                                     (df_cells['Signal_Pattern_Short'] == pattern) &
-                                     (df_cells['Tech No.'] == 'Tech 2')]
-                tech2_value = tech2_data['Value'].fillna(0).sum()
-
-                sum_value = tech1_value + tech2_value
-                pct_value = (sum_value / total_cells) * 100 if total_cells > 0 else 0
-
-                result_df.loc[idx, tech1_col] = tech1_value
-                result_df.loc[idx, tech2_col] = tech2_value
-                result_df.loc[idx, pct_col] = pct_value
+                tech1_val = df_cells[(df_cells['Case No.'] == case_no_current) & (df_cells['Signal_Pattern_Short'] == pattern) & (df_cells['Tech No.'] == 'Tech 1')]['Value'].fillna(0).sum()
+                tech2_val = df_cells[(df_cells['Case No.'] == case_no_current) & (df_cells['Signal_Pattern_Short'] == pattern) & (df_cells['Tech No.'] == 'Tech 2')]['Value'].fillna(0).sum()
+                sum_val = tech1_val + tech2_val
+                result_df.loc[idx, tech1_col] = tech1_val
+                result_df.loc[idx, tech2_col] = tech2_val
+                result_df.loc[idx, pct_col] = (sum_val / total_cells) * 100 if total_cells > 0 else 0
         
-        frg3_patterns_selected = [p for p in patterns_to_process if 'FRG>3swa' in p or 'FRW>3swa' in p]
-        frg1_3_patterns_selected = [p for p in patterns_to_process if any(substr in p for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa'])]
+        # Handle combined FRG>1swa (Break Apart) - based on selected patterns by user
+        frg3_user_selected = [p for p in self.selected_patterns if 'FRG>3swa' in p or 'FRW>3swa' in p]
+        frg1_3_user_selected = [p for p in self.selected_patterns if any(substr in p for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa'])]
 
-        if frg3_patterns_selected and frg1_3_patterns_selected:
-            self.log_message("Creating combined FRG>1swa pattern (Break Apart)...", "blue")
-            frg3_p_name = frg3_patterns_selected[0]
-            frg1_3_p_name = frg1_3_patterns_selected[0]
+        if frg3_user_selected and frg1_3_user_selected:
+            self.log_message("Creating combined FRG>1swa pattern (Break Apart) as components were selected...", "blue")
+            # Ensure the components' data columns were actually created if they were in patterns_to_process
+            frg3_p_name = frg3_user_selected[0] # Use the first one found that user selected
+            frg1_3_p_name = frg1_3_user_selected[0]
 
-            combined_tech1_col = "FRG>1swa_Tech 1"
-            combined_tech2_col = "FRG>1swa_Tech 2"
-            combined_pct_col = "FRG>1swa_%"
+            combined_tech1_col, combined_tech2_col, combined_pct_col = "FRG>1swa_Tech 1", "FRG>1swa_Tech 2", "FRG>1swa_%"
+            
+            # Sum from component columns, only if those component columns exist in result_df
+            val_frg3_t1 = result_df.get(f"{frg3_p_name}_Tech 1", pd.Series(0, index=result_df.index))
+            val_frg1_3_t1 = result_df.get(f"{frg1_3_p_name}_Tech 1", pd.Series(0, index=result_df.index))
+            result_df[combined_tech1_col] = val_frg3_t1 + val_frg1_3_t1
 
-            result_df[combined_tech1_col] = result_df.get(f"{frg3_p_name}_Tech 1", 0) + result_df.get(f"{frg1_3_p_name}_Tech 1", 0)
-            result_df[combined_tech2_col] = result_df.get(f"{frg3_p_name}_Tech 2", 0) + result_df.get(f"{frg1_3_p_name}_Tech 2", 0)
+            val_frg3_t2 = result_df.get(f"{frg3_p_name}_Tech 2", pd.Series(0, index=result_df.index))
+            val_frg1_3_t2 = result_df.get(f"{frg1_3_p_name}_Tech 2", pd.Series(0, index=result_df.index))
+            result_df[combined_tech2_col] = val_frg3_t2 + val_frg1_3_t2
             
             combined_sum_values = result_df[combined_tech1_col] + result_df[combined_tech2_col]
             result_df[combined_pct_col] = (combined_sum_values / total_cells) * 100 if total_cells > 0 else 0
         return result_df
 
-
     def calculate_cutoff_and_grey_zones(self, df, total_cells):
         self.log_message(f"Calculating cutoff values (Beta method) for {total_cells} cells...")
-        pattern_names = set()
-        for col in df.columns:
-            if '_%' in col: pattern_names.add(col.split('_')[0])
+        pattern_names_in_df = set(col.split('_')[0] for col in df.columns if '_%' in col) # Patterns present in the processed df
+        
+        # Filter these by what user actually selected for the report, plus combined FRG if present
+        # self.selected_patterns includes short names. FRG>1swa is added if generated.
+        patterns_for_cutoff = [p for p in self.selected_patterns if p in pattern_names_in_df]
+        if "FRG>1swa" in pattern_names_in_df and "FRG>1swa" not in patterns_for_cutoff: # If FRG>1swa was generated
+            # Check if its components were selected by user to justify including it
+            frg3_user_selected = any('FRG>3swa' in sp or 'FRW>3swa' in sp for sp in self.selected_patterns)
+            frg1_3_user_selected = any(any(substr in sp for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa']) for sp in self.selected_patterns)
+            if frg3_user_selected and frg1_3_user_selected:
+                patterns_for_cutoff.append("FRG>1swa")
+        
         results = []
-        for pattern in pattern_names:
+        for pattern in patterns_for_cutoff: # Iterate based on selection order
             tech1_col, tech2_col, pct_col = f"{pattern}_Tech 1", f"{pattern}_Tech 2", f"{pattern}_%"
             if tech1_col in df.columns and tech2_col in df.columns and pct_col in df.columns:
                 sum_values = df[tech1_col] + df[tech2_col]
                 max_sum = sum_values.max()
-                percentages = df[pct_col].values / 100
+                percentages = df[pct_col].values / 100.0
                 percentages = percentages[~np.isnan(percentages)]
-                if len(percentages) > 0:
+
+                if len(percentages) == 0 and pattern not in df.columns: # Skip if pattern has no data at all
+                    self.log_message(f"Skipping cutoff for pattern '{pattern}' as no data is available in the current sheet.", "red", True) # Changed from orange
+                    continue
+                
+                if len(percentages) > 0 : # Ensure there is data to process
                     percentages_for_sd = percentages.copy()
                     if np.all(percentages_for_sd == 0):
-                        self.log_message(f"WARNING: All percentage values are 0 for pattern {pattern}. Adding 0.5% to one case for SD calculation (Beta).", "orange")
+                        self.log_message(f"WARNING: All percentage values are 0 for pattern {pattern}. Adding 0.5% to one case for SD calculation (Beta).", "red", True) # Changed
                         if len(percentages_for_sd) > 0: percentages_for_sd[0] = 0.005
                     
-                    n, k = total_cells, min(int(max_sum if pd.notna(max_sum) else 0), total_cells -1) 
-                    if k < 0: k = 0 
+                    n_param, k_param = total_cells, min(int(max_sum if pd.notna(max_sum) else 0), total_cells -1) 
+                    if k_param < 0: k_param = 0 
 
                     confidence_level = 0.95
-                    param_a = k + 1
-                    param_b = total_cells - k + 1 
+                    param_a, param_b = k_param + 1, total_cells - k_param + 1 
                     if param_a <=0 : param_a = 1e-9 
                     if param_b <=0 : param_b = 1e-9
 
-                    cutoff_beta = beta.ppf(confidence_level, param_a, param_b) if k <= total_cells else 1.0
-                    cutoff_beta_pct = cutoff_beta * 100
+                    cutoff_beta = beta.ppf(confidence_level, param_a, param_b) if k_param <= total_cells else 1.0
+                    cutoff_beta_pct = cutoff_beta * 100.0
                     
-                    std_dev = np.std(percentages_for_sd) * 100
+                    std_dev = np.std(percentages_for_sd) * 100.0
                     if std_dev < 0.1:
                         std_dev = 0.5
-                        self.log_message(f"Applied minimum SD of 0.5% for pattern {pattern} (Beta method)", "orange")
+                        self.log_message(f"Applied minimum SD of 0.5% for pattern {pattern} (Beta method).", "red", True) # Changed
                     
                     grey_zone_lower = max(0, cutoff_beta_pct - 2 * std_dev)
                     grey_zone_upper = min(100, cutoff_beta_pct + 2 * std_dev)
-                    non_zero_values = sum_values.values[sum_values.values >= 0] 
-                    data_range = f"{int(min(non_zero_values))}-{int(max(non_zero_values))}" if len(non_zero_values) > 0 else "0-0"
+                    # Ensure sum_values is not empty before min/max
+                    valid_sum_values = sum_values.values[pd.notna(sum_values.values) & (sum_values.values >= 0)]
+                    data_range = f"{int(min(valid_sum_values))}-{int(max(valid_sum_values))}" if len(valid_sum_values) > 0 else "0-0"
                     
                     results.append({
                         'Signal_Pattern': pattern, 'Cutoff_95%_CI': f"{cutoff_beta_pct:.2f}%",
                         'Grey_Zone_Lower': f"{grey_zone_lower:.2f}%", 'Grey_Zone_Upper': f"{grey_zone_upper:.2f}%",
                         'Range': data_range, 'Standard_Deviation': f"{std_dev:.2f}%", 'Controls': "(20 controls)"
                     })
-        self.log_message(f"Calculated {len(results)} Beta cutoff values for {total_cells} cells")
+                else: # If percentages array is empty after filtering NaNs
+                    self.log_message(f"No valid percentage data to calculate Beta cutoff for pattern '{pattern}'.", "red", True) # Changed
+
+        self.log_message(f"Calculated {len(results)} Beta cutoff values for {total_cells} cells.")
         return pd.DataFrame(results)
 
     def calculate_cutoff_and_grey_zones_cribinom(self, df, total_cells):
         self.log_message(f"Calculating cutoff values (Cribinom method) for {total_cells} cells...")
-        pattern_names = set()
-        for col in df.columns:
-            if '_%' in col: pattern_names.add(col.split('_')[0])
+        pattern_names_in_df = set(col.split('_')[0] for col in df.columns if '_%' in col)
+        
+        patterns_for_cutoff = [p for p in self.selected_patterns if p in pattern_names_in_df]
+        if "FRG>1swa" in pattern_names_in_df and "FRG>1swa" not in patterns_for_cutoff:
+            frg3_user_selected = any('FRG>3swa' in sp or 'FRW>3swa' in sp for sp in self.selected_patterns)
+            frg1_3_user_selected = any(any(substr in sp for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa']) for sp in self.selected_patterns)
+            if frg3_user_selected and frg1_3_user_selected:
+                patterns_for_cutoff.append("FRG>1swa")
+
         results = []
         confidence_level = 0.95
-        for pattern in pattern_names:
+        for pattern in patterns_for_cutoff:
             tech1_col, tech2_col, pct_col = f"{pattern}_Tech 1", f"{pattern}_Tech 2", f"{pattern}_%"
             if tech1_col in df.columns and tech2_col in df.columns and pct_col in df.columns:
                 sum_values = df[tech1_col] + df[tech2_col]
-                percentages = df[pct_col].values / 100
+                percentages = df[pct_col].values / 100.0
                 percentages = percentages[~np.isnan(percentages)]
+
+                if len(percentages) == 0 and pattern not in df.columns:
+                    self.log_message(f"Skipping cutoff for pattern '{pattern}' as no data is available in the current sheet.", "red", True) # Changed
+                    continue
+
                 if len(percentages) > 0:
                     p_for_cutoff = np.mean(percentages)
                     if np.all(percentages == 0) or p_for_cutoff == 0:
                         p_for_cutoff = 0.005 
-                        self.log_message(f"WARNING: All percentages are 0 or mean is 0 for pattern '{pattern}'. Using p=0.005 for Cribinom.", "orange")
+                        self.log_message(f"WARNING: All percentages are 0 or mean is 0 for pattern '{pattern}'. Using p=0.005 for Cribinom.", "red", True) # Changed
 
                     cutoff_count = binom.ppf(confidence_level, n=total_cells, p=p_for_cutoff)
                     if cutoff_count == 0 and p_for_cutoff < 0.01: 
                          cutoff_count = 1 
-                         self.log_message(f"Adjusted Cribinom cutoff for '{pattern}' from 0 to 1.", "orange")
+                         self.log_message(f"Adjusted Cribinom cutoff for '{pattern}' from 0 to 1.", "red", True) # Changed
 
-                    cutoff_cribinom_pct = (cutoff_count / total_cells) * 100
-                    grey_zone_lower = cutoff_cribinom_pct
+                    cutoff_cribinom_pct = (cutoff_count / total_cells) * 100.0
+                    grey_zone_lower = cutoff_cribinom_pct 
                     grey_zone_upper = min(100, cutoff_cribinom_pct + 3.0)
                     
-                    std_dev = np.std(percentages) * 100
-                    if std_dev < 0.1 and np.any(percentages > 0):
+                    std_dev = np.std(percentages) * 100.0
+                    if std_dev < 0.1 and np.any(percentages > 0): # only apply if some data exists
                         std_dev = 0.5
-                        self.log_message(f"Applied minimum SD of 0.5% for pattern {pattern} (Cribinom method)", "orange")
-                    elif np.all(percentages == 0): std_dev = 0.0
+                        self.log_message(f"Applied minimum SD of 0.5% for pattern {pattern} (Cribinom method).", "red", True) # Changed
+                    elif np.all(percentages == 0): std_dev = 0.0 # if all percentages are zero, std dev is zero
                         
-                    non_zero_values = sum_values.values[sum_values.values >= 0]
-                    data_range = f"{int(min(non_zero_values))}-{int(max(non_zero_values))}" if len(non_zero_values) > 0 else "0-0"
+                    valid_sum_values = sum_values.values[pd.notna(sum_values.values) & (sum_values.values >= 0)]
+                    data_range = f"{int(min(valid_sum_values))}-{int(max(valid_sum_values))}" if len(valid_sum_values) > 0 else "0-0"
                     results.append({
                         'Signal_Pattern': pattern, 'Cutoff_95%_CI': f"{cutoff_cribinom_pct:.2f}%",
                         'Grey_Zone_Lower': f"{grey_zone_lower:.2f}%", 'Grey_Zone_Upper': f"{grey_zone_upper:.2f}%",
                         'Range': data_range, 'Standard_Deviation': f"{std_dev:.2f}%", 'Controls': "(20 controls)"
                     })
-        self.log_message(f"Calculated {len(results)} Cribinom cutoff values for {total_cells} cells")
+                else:
+                    self.log_message(f"No valid percentage data to calculate Cribinom cutoff for pattern '{pattern}'.", "red", True) # Changed
+        self.log_message(f"Calculated {len(results)} Cribinom cutoff values for {total_cells} cells.")
         return pd.DataFrame(results)
 
     def create_reorganized_html_content(self, df_first, df_second):
+        # ... (HTML structure remains largely the same) ...
         table_width, font_size = "100%", "10px"
         html_content = f"""<!DOCTYPE html><html><head>
             <title>{self.probe_name} Cell Analysis ({self.cell_counts[0]}/{self.cell_counts[1]} Cells)</title><style>
@@ -236,36 +240,43 @@ class FISHDataAnalyzer:
         html_content += "</div></body></html>"
         return html_content
 
-    def create_table_content(self, df, total_cells):
-        if df.empty: return "<p>No data available</p>"
+    def create_table_content(self, df, total_cells): # df is the reorganized data for one cell count
+        if df.empty: return "<p>No data available for table content generation.</p>"
         base_cols = ['Case No.', 'Hybe date', 'Case ID', '# Scored']
-        pattern_names = sorted(list(set(col.split('_')[0] for col in df.columns if col.endswith('_Tech 1') or col.endswith('_Tech 2') or col.endswith('_'))))
         
-        selected_short_patterns = []
-        for sp in self.selected_patterns:
-            selected_short_patterns.append(sp)
+        # Determine all unique short pattern names available in the current df's columns
+        all_patterns_in_data = list(set(col.split('_')[0] for col in df.columns if col.endswith('_Tech 1') or col.endswith('_Tech 2') or col.endswith('_')))
 
-        frg3_selected = any('FRG>3swa' in p or 'FRW>3swa' in p for p in selected_short_patterns)
-        frg1_3_selected = any(any(substr in p for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa']) for p in selected_short_patterns)
+        # Use self.selected_patterns (which is in user's selection order)
+        # and filter by patterns actually present in the current data (df)
+        final_pattern_names_for_table = [
+            p for p in self.selected_patterns if p in all_patterns_in_data
+        ]
+        
+        # Handle combined FRG>1swa: if its components were selected by user AND it was generated (exists in all_patterns_in_data)
+        # and it's not already part of final_pattern_names_for_table (e.g. if user explicitly selected a pattern named "FRG>1swa")
+        frg3_user_selected = any('FRG>3swa' in p or 'FRW>3swa' in p for p in self.selected_patterns)
+        frg1_3_user_selected = any(any(substr in p for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa']) for p in self.selected_patterns)
 
-        final_pattern_names_for_table = []
-        for pn in pattern_names:
-            if pn in selected_short_patterns:
-                final_pattern_names_for_table.append(pn)
-        
-        if frg3_selected and frg1_3_selected and "FRG>1swa" in pattern_names and "FRG>1swa" not in final_pattern_names_for_table :
-            final_pattern_names_for_table.append("FRG>1swa")
-        
-        final_pattern_names_for_table = sorted(list(set(final_pattern_names_for_table)))
+        if frg3_user_selected and frg1_3_user_selected and "FRG>1swa" in all_patterns_in_data:
+            if "FRG>1swa" not in final_pattern_names_for_table:
+                final_pattern_names_for_table.append("FRG>1swa") # Append to maintain prior order
+
+        if not final_pattern_names_for_table:
+             return "<p>No selected patterns have corresponding data to display in table.</p>"
 
         max_values, max_row_indices = {}, {}
         for pattern in final_pattern_names_for_table:
             pct_col = f"{pattern}_%"
-            if pct_col in df.columns:
+            if pct_col in df.columns: # Ensure the percentage column exists
                 max_val = df[pct_col].max()
                 if pd.notna(max_val) and max_val > 0:
                     max_values[pattern] = max_val
-                    max_row_indices[pattern] = df[df[pct_col] == max_val].index[0] 
+                    # Get the first index if multiple rows have the max value
+                    max_indices = df[df[pct_col] == max_val].index
+                    if not max_indices.empty:
+                        max_row_indices[pattern] = max_indices[0]
+        
         html = "<table><thead><tr>"
         for col in base_cols: html += f'<th rowspan="2" class="header-light-blue">{col}</th>'
         for pattern in final_pattern_names_for_table: html += f'<th colspan="3" class="header-dark-blue">{pattern}</th>'
@@ -278,13 +289,19 @@ class FISHDataAnalyzer:
             for pattern in final_pattern_names_for_table:
                 t1, t2, pct = f"{pattern}_Tech 1", f"{pattern}_Tech 2", f"{pattern}_%"
                 v1, v2, vp = row_data.get(t1, 0), row_data.get(t2, 0), row_data.get(pct, 0.0)
-                highlight_class = "highlight" if pattern in max_values and max_values.get(pattern) == vp and row_idx == max_row_indices.get(pattern) and vp > 0 else ""
+                highlight_class = ""
+                if pattern in max_values and max_row_indices.get(pattern) == row_idx and vp > 0: # Check if current row_idx matches stored max_row_idx
+                    if pd.notna(vp) and vp == max_values.get(pattern): # Ensure value matches
+                         highlight_class = "highlight"
                 html += f'<td class="{highlight_class}">{v1}</td><td class="{highlight_class}">{v2}</td><td class="{highlight_class}">{vp:.2f}%</td>'
             html += '</tr>'
         html += "</tbody></table>"
         return html
 
     def create_cutoff_html_content(self, cutoff_first, cutoff_second):
+        # ... (HTML structure remains largely the same) ...
+        # The cutoff DataFrames (cutoff_first, cutoff_second) should already be in the desired order
+        # if calculate_cutoff_and_grey_zones functions iterate based on self.selected_patterns.
         html_content = f"""<!DOCTYPE html><html><head>
             <title>{self.probe_name} Cut-off/GrayZone ({self.cell_counts[0]}/{self.cell_counts[1]} Cells) - {self.calculation_method}</title><style>
             body{{font-family:Arial,sans-serif;margin:10px;background-color:#f5f5f5;font-size:14px;}}
@@ -320,9 +337,10 @@ class FISHDataAnalyzer:
         html_content += '</div></div></div></div></body></html>'
         return html_content
 
-    def create_compact_pattern_sections(self, df_results):
+    def create_compact_pattern_sections(self, df_results): # df_results is one of the cutoff DFs
         html = ""
-        for _, row in df_results.iterrows():
+        # The df_results should already be in the correct order from calculate_cutoff functions
+        for _, row in df_results.iterrows(): # Iterating over DataFrame rows preserves their order
             html += f"""<div class="pattern-container"><div class="pattern-header">{row['Signal_Pattern']}</div>
                 <table class="compact-table">
                 <tr><td class="label-cell">Cutoff (95% C.I.)</td><td class="value-cell cutoff-value">{row['Cutoff_95%_CI']}</td></tr>
@@ -332,29 +350,31 @@ class FISHDataAnalyzer:
                 </table></div>"""
         return html
 
-# === Helper Functions (Adapted from FISHAnalysisGUI Tkinter Class) ===
+# === Helper Functions ===
 def streamlit_log_message(message, color="black", bold=False):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    # Keep log_entry simple here, apply markdown styling based on color and bold
     log_entry_text = f"[{timestamp}] {message}"
     
-    styled_log_entry = log_entry_text # Default
+    styled_log_entry = log_entry_text
     
+    # Apply bold first if requested
     if bold:
         styled_log_entry = f"**{log_entry_text}**"
     
-    if color != "black":
-        # Streamlit's specific color markdown
-        if color == "red": styled_log_entry = f":red[{styled_log_entry}]"
-        elif color == "green": styled_log_entry = f":green[{styled_log_entry}]"
-        elif color == "blue": styled_log_entry = f":blue[{styled_log_entry}]"
-        elif color == "orange": styled_log_entry = f":orange[{styled_log_entry}]"
-        # If color is not one of these, and bold is true, it's already bolded.
-        # If color is not one of these and bold is false, it's plain.
+    # Then apply color markdown. If bold was applied, it wraps the bolded text.
+    # For "orange" warnings, user wants red and bold.
+    if color == "orange": # Treat "orange" as a directive for red & bold warning
+        styled_log_entry = f":red[**{log_entry_text}**]" # Ensure bold, make it red
+    elif color == "red":
+        styled_log_entry = f":red[{styled_log_entry}]" # Already bolded if bold=True
+    elif color == "green":
+        styled_log_entry = f":green[{styled_log_entry}]"
+    elif color == "blue":
+        styled_log_entry = f":blue[{styled_log_entry}]"
+    # If color is "black" or unhandled, styled_log_entry remains as is (plain or bolded)
     
     if 'log_messages' not in st.session_state:
         st.session_state.log_messages = []
-    
     st.session_state.log_messages.append(styled_log_entry)
 
 
@@ -364,7 +384,7 @@ def process_single_table_excel(df_raw, start, end, log_func):
         table_with_headers = df_raw.iloc[header_start:end+1].copy().reset_index(drop=True)
 
         if table_with_headers.shape[0] < 2: 
-            log_func(f"Table at original rows {start+1}-{end+1} is too short for header processing.", "orange")
+            log_func(f"Table at original rows {start+1}-{end+1} is too short for header processing.", "red", True) # Changed
             return []
 
         merged_header_row = table_with_headers.iloc[0].tolist()
@@ -405,7 +425,7 @@ def process_single_table_excel(df_raw, start, end, log_func):
                 final_headers.append(f"UnnamedCol_{i}")
         
         if len(final_headers) != table_data_rows.shape[1]:
-            log_func(f"Header length mismatch in table at original rows {start+1}-{end+1}. Expected {table_data_rows.shape[1]}, got {len(final_headers)}. Adjusting.", "orange")
+            log_func(f"Header length mismatch in table at original rows {start+1}-{end+1}. Expected {table_data_rows.shape[1]}, got {len(final_headers)}. Adjusting.", "red", True) # Changed
             final_headers = final_headers[:table_data_rows.shape[1]] 
             while len(final_headers) < table_data_rows.shape[1]: 
                 final_headers.append(f"AutoHeader_{len(final_headers)}")
@@ -443,7 +463,7 @@ def process_single_table_excel(df_raw, start, end, log_func):
                                 }
                                 processed_data_list.append(pd.DataFrame([data_point]))
         else:
-            log_func(f"Warning: 'Tech No.' column not found in table at original rows {start+1}-{end+1}. Cannot process tech-specific data for this table.", "orange")
+            log_func(f"Warning: 'Tech No.' column not found in table at original rows {start+1}-{end+1}. Cannot process tech-specific data.", "red", True) # Changed
         return processed_data_list
     except Exception as e:
         log_func(f"CRITICAL error processing table at original rows {start+1}-{end+1}: {e}", "red", True)
@@ -508,7 +528,7 @@ def read_fish_data_from_excel(uploaded_file_obj, log_func, progress_bar_st):
                     log_func(f"Table {i+1} (original rows {start_idx+1}-{end_idx+1}) processed.")
             else:
                 excluded_count += 1
-                log_func(f"Table {i+1} (original rows {start_idx+1}-{end_idx+1}) excluded due to insufficient valid data.", "orange")
+                log_func(f"Table {i+1} (original rows {start_idx+1}-{end_idx+1}) excluded due to insufficient valid data.", "red", True) # Changed
         
         if excluded_count > 0:
             log_func(f"INFO: Excluded {excluded_count} tables.", "blue")
@@ -534,11 +554,12 @@ def detect_cell_counts_streamlit(fish_data_df, log_func):
     log_func(f"Found Score No. values: {sorted(list(score_nos))}")
     
     counts = [200, 500] 
-    if 50 in score_nos: 
+    if 50.0 in score_nos or 50 in score_nos: # Check for float and int
         counts = [100, 200] 
-    elif 100 in score_nos and 150 in score_nos: 
+    elif (100.0 in score_nos or 100 in score_nos) and \
+         (150.0 in score_nos or 150 in score_nos): 
         counts = [200, 500] 
-    elif 100 in score_nos: 
+    elif 100.0 in score_nos or 100 in score_nos: 
         counts = [200, 500]
     log_func(f"Determined cell counts: {counts}")
     return counts
@@ -556,7 +577,7 @@ def check_frg_pattern_combination_streamlit(selected_patterns_short, log_func):
     frg1_3 = any(any(substr in p for substr in ['FRG>1swa<3swa', 'FRW>1swa<3swa', 'FRG>1<3swa', 'FRW>1<3swa']) for p in selected_patterns_short)
     if frg3 and frg1_3:
         msg = "Break_apart probe patterns selected. Software will automatically generate combined 'FRG>1swa' results."
-        st.info(msg)
+        st.info(msg) # This is a streamlit info box, not a log message directly.
         log_func("FRG (Break Apart) pattern combination detected - will generate combined results.", "blue")
         return True
     return False
@@ -569,23 +590,33 @@ def run_fish_analysis_app():
     # Initialize session state
     for key, default_val in [
         ('log_messages', []), ('fish_data', None), ('available_patterns', []),
-        ('cell_counts', [200, 500]), ('probe_name', ""), ('selected_patterns_ui', []),
+        ('cell_counts', [200, 500]), ('probe_name', ""),
+        ('selected_patterns_ui', []), # Canonical list of selected patterns
         ('data_loaded_successfully', False), ('last_uploaded_filename', None),
         ('current_probe_name_in_widget', ""),
-        ('html_reorganized_content', None), ('fname_reorganized_report', None), # For persistent download
-        ('html_cutoff_content', None), ('fname_cutoff_report', None),         # For persistent download
-        ('reports_generated_once', False)                                      # Flag for report generation
+        ('html_reorganized_content', None), ('fname_reorganized_report', None),
+        ('html_cutoff_content', None), ('fname_cutoff_report', None),
+        ('reports_generated_once', False)
     ]:
         if key not in st.session_state: st.session_state[key] = default_val
 
-    # --- Log Display Area (Sidebar or Expander) ---
+    # --- Callback for pattern selection changes ---
+    def multiselect_on_change_callback():
+        # Update the canonical selected_patterns_ui from the widget's state
+        if 'pattern_multiselect_widget' in st.session_state: # key of the multiselect
+            st.session_state.selected_patterns_ui = st.session_state.pattern_multiselect_widget
+        
+        # Common logic for any selection change
+        st.session_state.reports_generated_once = False
+        streamlit_log_message("Pattern selection changed. Reports will need to be regenerated.", "blue")
+
+    # --- Log Display Area (Sidebar) ---
     with st.sidebar:
         st.header("📋 Processing Log")
-        log_placeholder = st.empty() # Used to dynamically update the log area
+        log_placeholder = st.empty()
         if st.button("Clear Log", key="clear_log_sidebar"):
             st.session_state.log_messages = []
             streamlit_log_message("Log cleared by user.")
-
 
     # --- Step 1: File Upload and Setup ---
     st.header("Step 1: File Upload and Probe Setup")
@@ -597,14 +628,15 @@ def run_fish_analysis_app():
             st.session_state.data_loaded_successfully = False 
             st.session_state.fish_data = None
             st.session_state.available_patterns = []
-            st.session_state.selected_patterns_ui = [] 
-            # Reset report generation state on new file
+            st.session_state.selected_patterns_ui = [] # Reset canonical list
+            if 'pattern_multiselect_widget' in st.session_state: # Reset widget state if it exists
+                st.session_state.pattern_multiselect_widget = []
+            
             st.session_state.html_reorganized_content = None
             st.session_state.fname_reorganized_report = None
             st.session_state.html_cutoff_content = None
             st.session_state.fname_cutoff_report = None
             st.session_state.reports_generated_once = False
-
 
             filename_stem = Path(uploaded_file.name).stem
             potential_probe = filename_stem.split('_')[0] if '_' in filename_stem else \
@@ -619,15 +651,17 @@ def run_fish_analysis_app():
         on_change=lambda: setattr(st.session_state, 'current_probe_name_in_widget', st.session_state.probe_name_text_input.upper().strip())
     ).upper().strip()
 
-
     if st.button("Load and Process Data", key="load_data_main_button"):
         st.session_state.log_messages = [] 
-        # Reset report generation state when processing new data
         st.session_state.html_reorganized_content = None
         st.session_state.fname_reorganized_report = None
         st.session_state.html_cutoff_content = None
         st.session_state.fname_cutoff_report = None
         st.session_state.reports_generated_once = False
+        st.session_state.selected_patterns_ui = [] # Reset selections on new load
+        if 'pattern_multiselect_widget' in st.session_state:
+             st.session_state.pattern_multiselect_widget = []
+
 
         streamlit_log_message("Attempting to load and process data...")
         if not uploaded_file:
@@ -651,7 +685,7 @@ def run_fish_analysis_app():
                     st.success(f"✅ Data loaded! {len(st.session_state.fish_data)} records. Counts: {st.session_state.cell_counts}. Patterns: {len(st.session_state.available_patterns)}.")
                     st.session_state.data_loaded_successfully = True
                     if not st.session_state.available_patterns:
-                        st.warning("⚠️ No signal patterns were identified in the data. Check file content and format.")
+                        st.warning("⚠️ No signal patterns were identified in the data. Check file content and format.") # This is st.warning, not streamlit_log_message
                 else:
                     st.error("❌ No valid data extracted. Check logs for details.")
                     st.session_state.data_loaded_successfully = False
@@ -662,45 +696,40 @@ def run_fish_analysis_app():
             finally:
                 if 'load_progress_bar' in locals() : load_progress_bar.empty()
 
-
     # --- Step 2: Signal Pattern Selection ---
     st.header("Step 2: Signal Pattern Selection")
     if st.session_state.data_loaded_successfully and st.session_state.available_patterns:
-        c1, c2 = st.columns(2)
-        if c1.button("Select All Patterns", key="select_all_btn"):
+        col1_btn, col2_btn = st.columns(2)
+        if col1_btn.button("Select All Patterns", key="select_all_btn"):
             st.session_state.selected_patterns_ui = st.session_state.available_patterns[:]
-            streamlit_log_message("Selected all available patterns.", "blue")
-            st.session_state.reports_generated_once = False # Reset if patterns change
-        if c2.button("Clear All Selections", key="clear_all_btn"):
-            st.session_state.selected_patterns_ui = []
-            streamlit_log_message("Cleared all pattern selections.", "blue")
-            st.session_state.reports_generated_once = False # Reset if patterns change
-        
-        valid_defaults = [p for p in st.session_state.selected_patterns_ui if p in st.session_state.available_patterns]
+            st.session_state.pattern_multiselect_widget = st.session_state.selected_patterns_ui # Update widget state for next render
+            st.session_state.reports_generated_once = False
+            streamlit_log_message("Selected all available patterns. Reports will need to be regenerated.", "blue")
+            st.rerun() # Rerun to make multiselect reflect the change immediately
 
-        # Monitor changes in multiselect to potentially reset report generation state
-        current_selection = st.multiselect(
+        if col2_btn.button("Clear All Selections", key="clear_all_btn"):
+            st.session_state.selected_patterns_ui = []
+            st.session_state.pattern_multiselect_widget = [] # Update widget state
+            st.session_state.reports_generated_once = False
+            streamlit_log_message("Cleared all pattern selections. Reports will need to be regenerated.", "blue")
+            st.rerun() # Rerun for immediate reflection
+
+        st.multiselect(
             "Select Signal Patterns:",
             options=st.session_state.available_patterns,
-            default=valid_defaults, 
-            key="pattern_multiselect_main"
+            default=st.session_state.selected_patterns_ui, # Default to our canonical list
+            key="pattern_multiselect_widget", # This key's value in session_state is the widget's current selection
+            on_change=multiselect_on_change_callback
         )
-        if current_selection != st.session_state.selected_patterns_ui:
-            st.session_state.selected_patterns_ui = current_selection
-            st.session_state.reports_generated_once = False # Patterns changed, require regeneration
-            streamlit_log_message("Pattern selection changed. Reports will need to be regenerated.", "blue")
-
-
     elif st.session_state.data_loaded_successfully:
         st.warning("Data loaded, but no signal patterns found. Cannot select patterns.")
     else:
         st.info("Load data in Step 1 to enable pattern selection.")
 
-
     # --- Step 3: Generate Reports ---
     st.header("Step 3: Generate Reports")
     if st.session_state.data_loaded_successfully and st.session_state.available_patterns:
-        if not st.session_state.selected_patterns_ui:
+        if not st.session_state.selected_patterns_ui: # Check the canonical list
             st.warning("⚠️ Please select at least one signal pattern in Step 2 to generate reports.")
         else:
             method_label = st.radio(
@@ -712,6 +741,7 @@ def run_fish_analysis_app():
             calc_method_actual = "Beta" if "Beta" in method_label else "Cribinom"
 
             if st.button("Generate HTML Reports", key="generate_reports_main_button"):
+                # Use st.session_state.selected_patterns_ui as it's the canonical list
                 streamlit_log_message(f"Generating reports for: {st.session_state.selected_patterns_ui}, Probe: {st.session_state.probe_name}, Method: {calc_method_actual}", "blue", True)
                 check_frg_pattern_combination_streamlit(st.session_state.selected_patterns_ui, streamlit_log_message)
                 
@@ -720,7 +750,8 @@ def run_fish_analysis_app():
                     with st.spinner("Generating reports... This may take a few moments."):
                         analyzer = FISHDataAnalyzer(
                             st.session_state.fish_data, st.session_state.cell_counts, 
-                            st.session_state.selected_patterns_ui, st.session_state.probe_name,
+                            st.session_state.selected_patterns_ui, # Pass the canonical list
+                            st.session_state.probe_name,
                             calc_method_actual, streamlit_log_message
                         )
                         
@@ -730,7 +761,6 @@ def run_fish_analysis_app():
                         html_reorganized = analyzer.create_reorganized_html_content(df_first_reorg, df_second_reorg)
                         fname_reorg = f"{analyzer.probe_name}_reorganized_data_{analyzer.cell_counts[0]}_{analyzer.cell_counts[1]}.html"
                         
-                        # Store in session state
                         st.session_state.html_reorganized_content = html_reorganized
                         st.session_state.fname_reorganized_report = fname_reorg
                         
@@ -744,11 +774,10 @@ def run_fish_analysis_app():
                         html_cutoff = analyzer.create_cutoff_html_content(cut_first, cut_second)
                         fname_cutoff = f"{analyzer.probe_name}_{calc_method_actual.lower()}_cutoff_{analyzer.cell_counts[0]}_{analyzer.cell_counts[1]}.html"
 
-                        # Store in session state
                         st.session_state.html_cutoff_content = html_cutoff
                         st.session_state.fname_cutoff_report = fname_cutoff
                         
-                        st.session_state.reports_generated_once = True # Flag that reports are ready
+                        st.session_state.reports_generated_once = True
                         report_progress_bar.progress(1.0, text="Reports generated!")
                         st.success("✅ Reports generated successfully!")
                         
@@ -757,11 +786,10 @@ def run_fish_analysis_app():
                     streamlit_log_message(f"CRITICAL REPORTING ERROR: {e}", "red", True)
                     import traceback
                     streamlit_log_message(traceback.format_exc(),"red")
-                    st.session_state.reports_generated_once = False # Failed, so not ready
+                    st.session_state.reports_generated_once = False
                 finally:
                    if 'report_progress_bar' in locals(): report_progress_bar.empty()
 
-            # Persistent display of download buttons if reports have been generated
             if st.session_state.get('reports_generated_once', False):
                 dl_col1, dl_col2 = st.columns(2)
                 if st.session_state.get('html_reorganized_content') and st.session_state.get('fname_reorganized_report'):
@@ -782,16 +810,14 @@ def run_fish_analysis_app():
                             mime="text/html",
                             key="dl_cutoff_persistent"
                         )
-
     elif st.session_state.data_loaded_successfully:
         st.warning("Data loaded, but no signal patterns found. Cannot generate reports.")
     else:
         st.info("Load data and select patterns in Steps 1 & 2 to enable report generation.")
 
-    # Update log display (sidebar) - MODIFIED for correct markdown rendering
-    log_output = "\n\n".join(st.session_state.log_messages) # Use double newline for better separation
+    # Update log display
+    log_output = "\n\n".join(st.session_state.log_messages)
     log_placeholder.markdown(log_output if log_output else "No log messages yet.", unsafe_allow_html=False)
-
 
 if __name__ == "__main__":
     run_fish_analysis_app()
