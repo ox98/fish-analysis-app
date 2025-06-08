@@ -1,8 +1,11 @@
 
 FISH Probe Cut-off Calculation Tool🔬
+
+
 This is a Streamlit web application designed to analyze Fluorescence In Situ Hybridization (FISH) probe data from Excel files. It processes raw scoring data, reorganizes it by cell count, calculates statistical cut-off values and grey zones using two different methods, and generates comprehensive HTML reports for laboratory use.
 Live Application Link
 You can access the live application here:[https://fish-analysis-app-ohz7j7ytrei9pwhkzkgydk.streamlit.app/]
+
 
 Features
     • Excel Data Upload: Securely upload and parse complex, multi-table Excel spreadsheets containing FISH scoring data.
@@ -15,6 +18,7 @@ Features
     • Report Generation: Produces two downloadable HTML reports:
         ◦ A detailed table of the reorganized scoring data.
         ◦ A compact summary of the cut-off, grey zone, and other statistics for each selected pattern.
+
 
 How It Works
 The application follows a simple three-step process for analysis:
@@ -30,6 +34,9 @@ Step 3: Generate Reports
     1. Choose Calculation Method: Select either the "Beta Inverse Function" or "CRITBINOM Function" for the cut-off calculation.
     2. Generate HTML Reports: Click the "Generate HTML Reports" button.
     3. Download: Download links for the two HTML reports (Reorganized Data and Cutoff Values) will appear.
+
+
+
 
 Methodology for Cut-off and Grey Zone
 The application provides two statistical methods to establish the upper limit of the normal range (cut-off) for signal patterns based on a control dataset (assumed to be from normal cases).
@@ -55,20 +62,4 @@ This method uses the binomial distribution to determine the number of abnormal c
         ◦ Lower Bound = Cut-off %
         ◦ Upper Bound = Cut-off % + 3%
 
-How to Run Locally
-To run this application on your local machine, follow these steps.
-    1. Clone the Repository:
-    2. Set Up a Python Environment: It is highly recommended to use a virtual environment.
-        ◦ Using Anaconda:
-        ◦ Using venv:
-    3. Install Dependencies:
-       (If a requirements.txt file is not present, install the packages manually):
-    4. Run the App:
-The application will open in your default web browser.
 
-Dependencies
-    • streamlit
-    • pandas
-    • numpy
-    • scipy
-    • openpyxl (for .xlsx file support)
