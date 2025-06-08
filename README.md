@@ -9,16 +9,21 @@ FISH Probe Cut-off Calculation Tool🔬
 
 
 Features
-	    • Excel Data Upload: Securely upload and parse complex, multi-table Excel spreadsheets containing FISH scoring data.
-	    • Automatic Data Reorganization: Aggregates data from two technicians and reorganizes it based on the number of cells scored (e.g., 100/200 or 200/500 cell counts).
-	    • Dynamic Pattern Selection: Automatically detects all signal patterns present in the data and allows the user to select which patterns to include in the analysis, respecting the selection order in the final reports.
-	    • Statistical Cut-off Calculation: Implements two distinct methods for determining the normal cut-off value for abnormal signal patterns:
-	        ◦ Beta Inverse Function (Original Method)
-	        ◦ CRITBINOM Function (Alternative Method)
-	    • Grey Zone Determination: Calculates a "grey zone" around the cut-off to aid in interpreting borderline cases.
-	    • Report Generation: Produces two downloadable HTML reports:
-	        ◦ A detailed table of the reorganized scoring data.
-	        ◦ A compact summary of the cut-off, grey zone, and other statistics for each selected pattern.
+    • Excel Data Upload: Securely upload and parse complex, multi-table Excel spreadsheets containing FISH scoring data.
+    
+    • Automatic Data Reorganization: Aggregates data from two technicians and reorganizes it based on the number of cells scored (e.g., 100/200 or 200/500 cell counts).
+    
+    • Dynamic Pattern Selection: Automatically detects all signal patterns present in the data and allows the user to select which patterns to include in the analysis, respecting the selection order in the final reports.
+    
+    • Statistical Cut-off Calculation: Implements two distinct methods for determining the normal cut-off value for abnormal signal patterns:
+	◦ Beta Inverse Function (Original Method)
+	◦ CRITBINOM Function (Alternative Method)
+	    
+     • Grey Zone Determination: Calculates a "grey zone" around the cut-off to aid in interpreting borderline cases.
+     
+    • Report Generation: Produces two downloadable HTML reports:
+	◦ A detailed table of the reorganized scoring data.
+	◦ A compact summary of the cut-off, grey zone, and other statistics for each selected pattern.
 
 
 How It Works
